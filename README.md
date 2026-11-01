@@ -1,0 +1,108 @@
+# M5Unit-NFC-Go
+
+[![test](https://github.com/nicolasmmb/M5Unit-NFC-Go/actions/workflows/test.yml/badge.svg)](https://github.com/nicolasmmb/M5Unit-NFC-Go/actions/workflows/test.yml)
+
+Pure-Go driver for the **M5Stack Unit NFC** (SKU **U216**, **ST25R3916**).
+No C, C++, CGo or Arduino.
+
+**Phase 1:** ST25R3916 core + **NFC-A probe** (activation, UID, type).
+NFC-F/V/B, read/write, NDEF and emulation are the next phases (see Roadmap).
+
+## Features
+
+- Full ST25R3916 initialization from the official sequence: identity,
+  SET_DEFAULT, test access, IO/TX driver, space-B registers, field detector,
+  antenna tuning, oscillator and regulator adjustment.
+- I2C transport at **0x50**, including the **16-bit space-B** register space.
+- NFC-A: REQA/WUPA, anticollision cascade CL1/CL2, SELECT, HLTA.
+- `Card`: UID (4/7 bytes), ATQA, SAK, type id/name and user memory.
+- `Begin`/`Detect`/`Halt`/`RFOn`/`RFOff`, timeouts and `context` cancellation.
+- **Zero allocations per operation** and fixed scratch buffers.
+- Host tests with a register/FIFO/PICC emulator and benchmarks with `tx/op`.
+
+## Hardware
+
+| Parameter | Value |
+|---|---|
+| Unit | M5Stack Unit NFC (U216) |
+| Chip | ST25R3916 (13.56 MHz NFC front end) |
+| Interface | I2C **0x50**, 400 kHz |
+| Wiring (M5StickC) | Grove I2C1: **SDA=G32, SCL=G33** |
+| Protocols | NFC-A (this phase); NFC-F/V/B later |
+
+The Grove port is shared with the other units (Encoder, GPS, ToF, Joystick2):
+connect only one at a time.
+
+## Install
+
+```bash
+go get github.com/nicolasmmb/M5Unit-NFC-Go@v0.1.0
+```
+
+## Quick start
+
+```go
+i2c := machine.I2C1
+_ = i2c.Configure(machine.I2CConfig{
+    SDA:       machine.GPIO32,
+    SCL:       machine.GPIO33,
+    Frequency: 400 * machine.KHz,
+})
+
+d := nfc.New(i2c)
+if err := d.Begin(context.Background()); err != nil {
+    println("nfc:", err.Error())
+}
+
+card, ok, err := d.Detect(context.Background())
+if err == nil && ok {
+    println(nfc.TypeName(card.TypeID), card.UID[:card.UIDLen])
+}
+```
+
+## API
+
+| Function | Description |
+|---|---|
+| `New(bus I2C) *Device` | Driver on any bus implementing `Tx(addr, w, r)` |
+| `Identity() (typ, rev, error)` | ST25R3916 identity register |
+| `Begin(ctx) error` | Reset and configure for NFC-A |
+| `Detect(ctx) (Card, bool, error)` | Activate one NFC-A card; `ok=false` when idle |
+| `Halt(ctx) error` | Send HLTA |
+| `RFOn()` / `RFOff()` | Field control |
+| `TypeName(id) string` | Label for the type table |
+
+`Card`: `UID [7]byte`, `UIDLen`, `ATQA`, `SAK`, `TypeID`, `UserMemory`.
+Helpers: `IsClassic()`, `IsType2()`.
+
+## Performance
+
+See [BENCHMARKS.md](BENCHMARKS.md). Host measurements:
+
+| Operation | Result |
+|---|---:|
+| `Begin` | 22.7 ms, 64 tx |
+| `Detect` (fake, no gaps) | 124 µs, 51 tx |
+| `Detect` (firmware-like gaps) | 13.9 ms, 51 tx |
+| `Detect` no card | 25.2 ms, 72 tx |
+| allocations | 0 per op |
+| `Device` / `Card` | 152 B / 14 B |
+
+## Roadmap (parity with UIFlow + M5Unit-NFC C++)
+
+1. **Probe** NFC-F (FeliCa/Suica/Pasmo), NFC-V, NFC-B.
+2. NFC-A read/write: Type 2 (Ultralight/NTAG) and MIFARE Classic (Crypto1).
+3. NFC-F read/write + Japanese transport-card flow.
+4. NFC-V, ISO-DEP/APDU/DESFire/Plus, NDEF.
+5. NFC-A/F emulation (feasibility depends on I2C polling latency).
+
+## References
+
+- [M5Stack Unit NFC (U216)](https://docs.m5stack.com/en/products/sku/U216)
+- [UIFlow driver](https://github.com/m5stack/uiflow-micropython/blob/master/m5stack/libs/driver/st25r3916.py)
+- [M5Unit-NFC (C++)](https://github.com/m5stack/M5Unit-NFC)
+- ST25R3916 datasheet / ST API
+
+## License
+
+MIT — see [LICENSE](LICENSE).
