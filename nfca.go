@@ -467,6 +467,67 @@ func (d *Device) DetectF(ctx context.Context) (FeliCaCard, bool, error) {
 	return c, true, nil
 }
 
+// NFCBCard is one detected NFC-B PICC.
+type NFCBCard struct {
+	PUPI        [4]byte
+	Application [4]byte
+	Protocol    [3]byte
+}
+
+// DetectB sends REQB (slot 1, AFI 0) and returns the ATQB fields.
+func (d *Device) DetectB(ctx context.Context) (NFCBCard, bool, error) {
+	ctx = ctxOrBackground(ctx)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.begun {
+		return NFCBCard{}, false, ErrNotBegun
+	}
+	if d.mode != modeB {
+		return NFCBCard{}, false, ErrWrongMode
+	}
+	if err := d.writeFWT(10); err != nil {
+		return NFCBCard{}, false, err
+	}
+	if err := d.clearBits(regAuxiliaryDefinition, noCRCRx); err != nil {
+		return NFCBCard{}, false, err
+	}
+	if err := d.clearInterrupts(); err != nil {
+		return NFCBCard{}, false, err
+	}
+	if err := d.command(cmdClearFIFO, nil); err != nil {
+		return NFCBCard{}, false, err
+	}
+	frame := [3]byte{0x05, 0x00, 0x00} // REQB, AFI 0, slot 1
+	if err := d.writeFIFO(frame[:]); err != nil {
+		return NFCBCard{}, false, err
+	}
+	if err := d.writeNumTX(len(frame), 0); err != nil {
+		return NFCBCard{}, false, err
+	}
+	if err := d.command(cmdTransmitWithCRC, nil); err != nil {
+		return NFCBCard{}, false, err
+	}
+	n, err := d.waitFIFO(ctx, 12, 10)
+	if err != nil {
+		return NFCBCard{}, false, err
+	}
+	if n < 12 {
+		return NFCBCard{}, false, nil
+	}
+	rb, err := d.readFIFO(n)
+	if err != nil {
+		return NFCBCard{}, false, err
+	}
+	if rb[0] != 0x50 { // ATQB
+		return NFCBCard{}, false, nil
+	}
+	var c NFCBCard
+	copy(c.PUPI[:], rb[1:5])
+	copy(c.Application[:], rb[5:9])
+	copy(c.Protocol[:], rb[9:12])
+	return c, true, nil
+}
+
 // IsClassic reports whether the card is a MIFARE Classic family card.
 func (c Card) IsClassic() bool { return c.TypeID >= 1 && c.TypeID <= 4 }
 

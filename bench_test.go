@@ -84,6 +84,25 @@ func BenchmarkDetectF(b *testing.B) {
 	reportTx(b, f, start)
 }
 
+func BenchmarkDetectB(b *testing.B) {
+	d, f := newTestDevice(b)
+	d.pollDelay = time.Millisecond
+	f.setTagB([4]byte{1, 2, 3, 4}, [4]byte{}, [3]byte{})
+	if err := d.ConfigureB(context.Background()); err != nil {
+		b.Fatal(err)
+	}
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	start := f.tx
+	for i := 0; i < b.N; i++ {
+		if _, ok, err := d.DetectB(ctx); err != nil || !ok {
+			b.Fatalf("DetectB: %v %v", ok, err)
+		}
+	}
+	reportTx(b, f, start)
+}
+
 func BenchmarkDetectNoCard(b *testing.B) {
 	d, f := newTestDevice(b)
 	d.pollDelay = time.Millisecond

@@ -5,9 +5,9 @@
 Pure-Go driver for the **M5Stack Unit NFC** (SKU **U216**, **ST25R3916**).
 No C, C++, CGo or Arduino.
 
-**Phase 1:** ST25R3916 core + **NFC-A probe** (activation, UID, type) and
-**NFC-F probe** (FeliCa polling, IDm/PMm — Suica/Pasmo).
-NFC-V/B, read/write, NDEF and emulation are the next phases (see Roadmap).
+**Phase 1:** ST25R3916 core + **NFC-A** (UID/type), **NFC-F** (FeliCa
+IDm/PMm — Suica/Pasmo) and **NFC-B** (ATQB/PUPI) probes.
+NFC-V, read/write, NDEF and emulation are the next phases (see Roadmap).
 
 ## Features
 
@@ -17,6 +17,7 @@ NFC-V/B, read/write, NDEF and emulation are the next phases (see Roadmap).
 - I2C transport at **0x50**, including the **16-bit space-B** register space.
 - NFC-A: REQA/WUPA, anticollision cascade CL1/CL2, SELECT, HLTA.
 - NFC-F: FeliCa polling at 212 kbps (wildcard system code), IDm/PMm.
+- NFC-B: REQB/ATQB, PUPI, application and protocol bytes.
 - `Card` (NFC-A): UID (4/7 bytes), ATQA, SAK, type id/name and user memory.
 - `FeliCaCard` (NFC-F): IDm and PMm.
 - `Begin`/`Detect`/`Halt`/`RFOn`/`RFOff`, timeouts and `context` cancellation.
@@ -72,7 +73,9 @@ if err == nil && ok {
 | `Begin(ctx) error` | Reset and configure for NFC-A |
 | `Detect(ctx) (Card, bool, error)` | Activate one NFC-A card; `ok=false` when idle |
 | `ConfigureA(ctx)` / `ConfigureF(ctx)` | Switch a begun device between NFC-A and NFC-F |
+| `ConfigureB(ctx)` | Switch a begun device to NFC-B |
 | `DetectF(ctx) (FeliCaCard, bool, error)` | FeliCa polling (IDm/PMm) |
+| `DetectB(ctx) (NFCBCard, bool, error)` | NFC-B REQB/ATQB |
 | `Mode() uint8` | Active protocol (1 = A, 2 = F) |
 | `Halt(ctx) error` | Send HLTA |
 | `RFOn()` / `RFOff()` | Field control |
@@ -92,12 +95,13 @@ See [BENCHMARKS.md](BENCHMARKS.md). Host measurements:
 | `Detect` (firmware-like gaps) | 13.9 ms, 51 tx |
 | `Detect` no card | 25.2 ms, 72 tx |
 | `DetectF` (FeliCa) | 62 µs, 17 tx |
+| `DetectB` (NFC-B) | (see BENCHMARKS) |
 | allocations | 0 per op |
 | `Device` / `Card` | 152 B / 14 B |
 
 ## Roadmap (parity with UIFlow + M5Unit-NFC C++)
 
-1. **Probe** NFC-V and NFC-B (NFC-F done).
+1. **Probe** NFC-V (ISO15693) and per-protocol screens.
 2. NFC-A read/write: Type 2 (Ultralight/NTAG) and MIFARE Classic (Crypto1).
 3. NFC-F read/write + Japanese transport-card flow.
 4. NFC-V, ISO-DEP/APDU/DESFire/Plus, NDEF.
