@@ -1,0 +1,9 @@
+*.bin
+*.elf
+*.map
+bench/*.txt
+bench/*.prof
+bench/*.cpu
+bench/*.mem
+.vscode/
+.idea/
