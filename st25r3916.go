@@ -640,7 +640,7 @@ func (d *Device) configureNFCF(ctx context.Context) error {
 	if err := d.command(cmdStopAllActivities, nil); err != nil {
 		return err
 	}
-	if err := d.writeReg(regModeDefinition, 0x18); err != nil { // initiator, FeliCa
+	if err := d.writeReg(regModeDefinition, 0x1C); err != nil { // initiator, FeliCa | tr_am (0x04)
 		return err
 	}
 	if err := d.writeReg(regBitrateDefinition, 0x11); err != nil { // 212 kbps TX/RX
