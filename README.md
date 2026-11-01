@@ -6,7 +6,7 @@ Pure-Go driver for the **M5Stack Unit NFC** (SKU **U216**, **ST25R3916**).
 No C, C++, CGo or Arduino.
 
 **Phase 1:** ST25R3916 core + **NFC-A** (UID/type), **NFC-F** (FeliCa
-IDm/PMm — Suica/Pasmo) and **NFC-B** (ATQB/PUPI) probes.
+IDm/PMm — FeliCa IC cards) and **NFC-B** (ATQB/PUPI) probes.
 NFC-V, read/write, NDEF and emulation are the next phases (see Roadmap).
 
 ## Features
