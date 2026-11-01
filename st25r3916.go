@@ -112,6 +112,11 @@ const (
 	timoREQA     = 12
 	timoAntiColl = 8
 	timoSelect   = 8
+	timoPollingF = 12
+
+	modeNone = 0
+	modeA    = 1
+	modeF    = 2
 
 	fcHz = 13560000
 )
@@ -121,6 +126,7 @@ var (
 	ErrNoChip     = errors.New("nfc: ST25R3916 not found or unsupported identity")
 	ErrOscillator = errors.New("nfc: oscillator did not start")
 	ErrNotBegun   = errors.New("nfc: Begin must be called first")
+	ErrWrongMode  = errors.New("nfc: protocol mode does not match")
 )
 
 // Device is a Unit NFC reader. It is safe for concurrent use.
@@ -137,6 +143,7 @@ type Device struct {
 	rx [64]byte
 
 	begun bool
+	mode  uint8
 }
 
 // New returns a Device on bus with the default I2C address.
@@ -355,6 +362,7 @@ func (d *Device) Begin(ctx context.Context) error {
 		return err
 	}
 	d.begun = true
+	d.mode = modeA
 	return nil
 }
 
@@ -594,6 +602,92 @@ func (d *Device) fieldOn() error {
 }
 
 var bgContext = context.Background()
+
+// ConfigureA switches a begun device to NFC-A (ISO14443-A).
+func (d *Device) ConfigureA(ctx context.Context) error {
+	ctx = ctxOrBackground(ctx)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.begun {
+		return ErrNotBegun
+	}
+	if err := d.configureNFCA(ctx); err != nil {
+		return err
+	}
+	d.mode = modeA
+	return nil
+}
+
+// ConfigureF switches a begun device to NFC-F (FeliCa, 212 kbps).
+func (d *Device) ConfigureF(ctx context.Context) error {
+	ctx = ctxOrBackground(ctx)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.begun {
+		return ErrNotBegun
+	}
+	if err := d.configureNFCF(ctx); err != nil {
+		return err
+	}
+	d.mode = modeF
+	return nil
+}
+
+func (d *Device) configureNFCF(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := d.command(cmdStopAllActivities, nil); err != nil {
+		return err
+	}
+	if err := d.writeReg(regModeDefinition, 0x18); err != nil { // initiator, FeliCa
+		return err
+	}
+	if err := d.writeReg(regBitrateDefinition, 0x11); err != nil { // 212 kbps TX/RX
+		return err
+	}
+	if err := d.clearBits(regOperationControl, 0x03); err != nil { // field detector off
+		return err
+	}
+	if err := d.writeReg(regIOConfig1, 0x07); err != nil {
+		return err
+	}
+	if err := d.writeReg(regAuxiliaryDefinition, 0x00); err != nil {
+		return err
+	}
+	for _, rv := range [...]struct{ reg, val uint8 }{
+		{regReceiverConfig1, 0x13},
+		{regReceiverConfig2, 0x3D},
+		{regReceiverConfig3, 0x00},
+		{regReceiverConfig4, 0x00},
+	} {
+		if err := d.writeReg(rv.reg, rv.val); err != nil {
+			return err
+		}
+	}
+	if err := d.writeRegSpaceB(regCorrelatorConfig1, 0x54); err != nil {
+		return err
+	}
+	if err := d.writeRegSpaceB(regCorrelatorConfig2, 0x00); err != nil {
+		return err
+	}
+	if err := d.write32(regMaskMainInterrupt, 0); err != nil {
+		return err
+	}
+	if err := d.command(cmdNFCInitialFieldOn, nil); err != nil {
+		return err
+	}
+	time.Sleep(5 * time.Millisecond)
+	return d.setBits(regOperationControl, txEn|rxEn)
+}
+
+// Mode returns the active protocol (0 none, 1 NFC-A, 2 NFC-F).
+func (d *Device) Mode() uint8 {
+	d.mu.Lock()
+	m := d.mode
+	d.mu.Unlock()
+	return m
+}
 
 func ctxOrBackground(ctx context.Context) context.Context {
 	if ctx == nil {

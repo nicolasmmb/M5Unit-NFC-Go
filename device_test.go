@@ -22,6 +22,9 @@ type fakeChip struct {
 	fail    bool
 
 	tag     bool
+	fcTag   bool
+	idm     [8]byte
+	pmm     [8]byte
 	atqa    uint16
 	uid     [7]byte
 	uidLen  int
@@ -42,6 +45,12 @@ func (f *fakeChip) setTag4(uid [4]byte, atqa uint16, sak uint8) {
 	f.uid = [7]byte{uid[0], uid[1], uid[2], uid[3]}
 	f.atqa = atqa
 	f.sak = sak
+}
+
+func (f *fakeChip) setTagF(idm, pmm [8]byte) {
+	f.fcTag = true
+	f.idm = idm
+	f.pmm = pmm
 }
 
 func (f *fakeChip) setTag7(uid [7]byte, atqa uint16, sak uint8) {
@@ -93,10 +102,24 @@ func (f *fakeChip) command(cmd uint8, payload []byte) {
 			f.fifoLen = 5
 		}
 	case cmdTransmitWithCRC:
-		if !f.tag || f.txLen < 2 {
+		if f.txLen < 2 {
 			return
 		}
 		if f.txbuf[0] == 0x50 {
+			return
+		}
+		if f.txbuf[0] == 0x00 && f.txLen == 5 { // NFC-F Polling
+			if !f.fcTag {
+				return
+			}
+			f.fifo[0] = 18
+			f.fifo[1] = 0x01
+			copy(f.fifo[2:10], f.idm[:])
+			copy(f.fifo[10:18], f.pmm[:])
+			f.fifoLen = 18
+			return
+		}
+		if !f.tag {
 			return
 		}
 		f.fifo[0] = f.sak
@@ -231,6 +254,46 @@ func TestDetectCascade(t *testing.T) {
 	}
 }
 
+func TestDetectF(t *testing.T) {
+	d, f := newTestDevice(t)
+	idm := [8]byte{0x01, 0x4B, 0x4F, 0x43, 0x20, 0x00, 0x00, 0x00}
+	pmm := [8]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+	f.setTagF(idm, pmm)
+	if _, _, err := d.DetectF(context.Background()); !errors.Is(err, ErrWrongMode) {
+		t.Fatalf("DetectF before ConfigureF = %v", err)
+	}
+	if err := d.ConfigureF(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	c, ok, err := d.DetectF(context.Background())
+	if err != nil || !ok {
+		t.Fatalf("DetectF = %v, %v", ok, err)
+	}
+	if c.IDm != idm || c.PMm != pmm {
+		t.Fatalf("FeliCa = %X %X", c.IDm, c.PMm)
+	}
+	if d.Mode() != modeF {
+		t.Fatalf("mode = %d", d.Mode())
+	}
+	if err := d.ConfigureA(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	f.setTag4([4]byte{1, 2, 3, 4}, 0x0004, 0x08)
+	if _, ok, err := d.Detect(context.Background()); err != nil || !ok {
+		t.Fatalf("Detect after ConfigureA = %v, %v", ok, err)
+	}
+}
+
+func TestDetectFNone(t *testing.T) {
+	d, _ := newTestDevice(t)
+	if err := d.ConfigureF(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := d.DetectF(context.Background()); err != nil || ok {
+		t.Fatalf("DetectF no card = %v, %v", ok, err)
+	}
+}
+
 func TestDetectNone(t *testing.T) {
 	d, _ := newTestDevice(t)
 	c, ok, err := d.Detect(context.Background())
@@ -288,11 +351,19 @@ func TestNoAlloc(t *testing.T) {
 	d, f := newTestDevice(t)
 	f.setTag4([4]byte{1, 2, 3, 4}, 0x0004, 0x08)
 	ctx := context.Background()
-	allocs := testing.AllocsPerRun(10, func() {
+	if allocs := testing.AllocsPerRun(10, func() {
 		_, _, _ = d.Detect(ctx)
-	})
-	if allocs != 0 {
+	}); allocs != 0 {
 		t.Fatalf("Detect allocates %v per call", allocs)
+	}
+	if err := d.ConfigureF(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.setTagF([8]byte{1, 2, 3, 4, 5, 6, 7, 8}, [8]byte{})
+	if allocs := testing.AllocsPerRun(10, func() {
+		_, _, _ = d.DetectF(ctx)
+	}); allocs != 0 {
+		t.Fatalf("DetectF allocates %v per call", allocs)
 	}
 }
 

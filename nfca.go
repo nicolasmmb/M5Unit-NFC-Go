@@ -179,6 +179,9 @@ func (d *Device) Detect(ctx context.Context) (Card, bool, error) {
 	if !d.begun {
 		return Card{}, false, ErrNotBegun
 	}
+	if d.mode != modeA {
+		return Card{}, false, ErrWrongMode
+	}
 
 	uid, uidLen, atqa, sak, ok, err := d.readUID(ctx)
 	if err != nil {
@@ -402,6 +405,66 @@ func (d *Device) Halt(ctx context.Context) error {
 	}
 	time.Sleep(2 * time.Millisecond)
 	return nil
+}
+
+// FeliCaCard is one detected NFC-F PICC (FeliCa IDm and PMm).
+type FeliCaCard struct {
+	IDm [8]byte
+	PMm [8]byte
+}
+
+// DetectF polls for one NFC-F card (212 kbps, wildcard system code).
+func (d *Device) DetectF(ctx context.Context) (FeliCaCard, bool, error) {
+	ctx = ctxOrBackground(ctx)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.begun {
+		return FeliCaCard{}, false, ErrNotBegun
+	}
+	if d.mode != modeF {
+		return FeliCaCard{}, false, ErrWrongMode
+	}
+
+	if err := d.writeFWT(timoPollingF); err != nil {
+		return FeliCaCard{}, false, err
+	}
+	if err := d.clearBits(regAuxiliaryDefinition, noCRCRx); err != nil {
+		return FeliCaCard{}, false, err
+	}
+	if err := d.clearInterrupts(); err != nil {
+		return FeliCaCard{}, false, err
+	}
+	if err := d.command(cmdClearFIFO, nil); err != nil {
+		return FeliCaCard{}, false, err
+	}
+	frame := [5]byte{0x00, 0xFF, 0xFF, 0x00, 0x00} // Polling, wildcard, no request, slot 1
+	if err := d.writeFIFO(frame[:]); err != nil {
+		return FeliCaCard{}, false, err
+	}
+	if err := d.writeNumTX(len(frame), 0); err != nil {
+		return FeliCaCard{}, false, err
+	}
+	if err := d.command(cmdTransmitWithCRC, nil); err != nil {
+		return FeliCaCard{}, false, err
+	}
+	n, err := d.waitFIFO(ctx, 18, timoPollingF)
+	if err != nil {
+		return FeliCaCard{}, false, err
+	}
+	if n < 18 {
+		return FeliCaCard{}, false, nil
+	}
+	rb, err := d.readFIFO(n)
+	if err != nil {
+		return FeliCaCard{}, false, err
+	}
+	if rb[0] < 18 || rb[1] != 0x01 { // length, Polling response
+		return FeliCaCard{}, false, nil
+	}
+	var c FeliCaCard
+	copy(c.IDm[:], rb[2:10])
+	copy(c.PMm[:], rb[10:18])
+	return c, true, nil
 }
 
 // IsClassic reports whether the card is a MIFARE Classic family card.

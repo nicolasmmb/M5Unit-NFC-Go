@@ -11,6 +11,7 @@ dominates on real hardware (400 kHz I2C, ~60–80 µs per transaction).
 | `BenchmarkBegin` | identity check + full init/regulator/oscillator/config sequence |
 | `BenchmarkDetect` | NFC-A activation against a scripted PICC (zero fake delays) |
 | `BenchmarkDetectRealistic` | same with the firmware's 2 ms command gaps + 1 ms polling |
+| `BenchmarkDetectF` | FeliCa polling (212 kbps) against a scripted PICC |
 | `BenchmarkDetectNoCard` | two timeouts (REQA + WUPA) and the polling cost |
 | `TestNoAlloc` / `TestBeginNoAlloc` | 0 allocations per operation |
 | `TestFootprint` | `Card` and `Device` sizes |
@@ -32,6 +33,7 @@ make bench-compare FROM=before TO=after
 | `Begin` | 22.7 ms | 64.2 | 0 |
 | `Detect` (fake, no delays) | 124 µs | 51.0 | 0 |
 | `DetectRealistic` | 13.9 ms | 51.0 | 0 |
+| `DetectF` | 62 µs | 17.0 | 0 |
 | `DetectNoCard` | 25.2 ms | 72.0 | 0 |
 
 - `Device` = **152 B**; `Card` = **14 B**.
