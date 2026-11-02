@@ -146,6 +146,11 @@ type Device struct {
 
 	begun bool
 	mode  uint8
+
+	c1            Crypto1
+	authenticated bool
+	rng           uint32
+	parityBuf     [16]byte
 }
 
 // New returns a Device on bus with the default I2C address.
@@ -155,6 +160,7 @@ func New(bus I2C) *Device {
 		addr:      DefaultAddress,
 		pollDelay: defaultPoll,
 		cmdDelay:  defaultCmdGap,
+		rng:       0x9E3779B9 ^ uint32(time.Now().UnixNano()),
 	}
 }
 

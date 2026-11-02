@@ -103,6 +103,25 @@ func BenchmarkDetectB(b *testing.B) {
 	reportTx(b, f, start)
 }
 
+func BenchmarkType2Read(b *testing.B) {
+	d, f := newTestDevice(b)
+	d.pollDelay = time.Millisecond
+	f.setTag7([7]byte{0x04, 1, 2, 3, 4, 5, 6}, 0x0044, 0x00)
+	if _, ok, _ := d.Detect(context.Background()); !ok {
+		b.Fatal("no tag")
+	}
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	start := f.tx
+	for i := 0; i < b.N; i++ {
+		if _, ok, err := d.Type2ReadPage(ctx, 4); err != nil || !ok {
+			b.Fatalf("Type2ReadPage: %v %v", ok, err)
+		}
+	}
+	reportTx(b, f, start)
+}
+
 func BenchmarkDetectV(b *testing.B) {
 	d, f := newTestDevice(b)
 	d.pollDelay = time.Millisecond

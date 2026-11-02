@@ -19,6 +19,9 @@ NFC-V, read/write, NDEF and emulation are the next phases (see Roadmap).
 - NFC-F: FeliCa polling at 212 kbps (wildcard system code), IDm/PMm.
 - NFC-B: REQB/ATQB, PUPI, application and protocol bytes.
 - NFC-V: ISO15693 inventory (1-of-4 VCD encoder and Manchester decoder), UID/DSFID.
+- **Type 2 read** (Ultralight/NTAG): READ 0x30, quad/page extraction.
+- **MIFARE Classic**: Crypto1 (Proxmark vector validated), key-A authentication
+  and encrypted block read. Writing is the next phase.
 - `Card` (NFC-A): UID (4/7 bytes), ATQA, SAK, type id/name and user memory.
 - `FeliCaCard` (NFC-F): IDm and PMm.
 - `Begin`/`Detect`/`Halt`/`RFOn`/`RFOff`, timeouts and `context` cancellation.
@@ -78,6 +81,8 @@ if err == nil && ok {
 | `DetectF(ctx) (FeliCaCard, bool, error)` | FeliCa polling (IDm/PMm) |
 | `DetectB(ctx) (NFCBCard, bool, error)` | NFC-B REQB/ATQB |
 | `ConfigureV(ctx)` / `DetectV(ctx)` | NFC-V ISO15693 inventory |
+| `Type2ReadPage(ctx, page)` / `Type2ReadQuad(ctx, base)` | Ultralight/NTAG read |
+| `ClassicReadBlock(ctx, uid, block, key)` | Crypto1 key-A auth + encrypted read |
 | `Mode() uint8` | Active protocol (1 = A, 2 = F) |
 | `Halt(ctx) error` | Send HLTA |
 | `RFOn()` / `RFOff()` | Field control |
@@ -98,13 +103,14 @@ See [BENCHMARKS.md](BENCHMARKS.md). Host measurements:
 | `Detect` no card | 25.2 ms, 72 tx |
 | `DetectF` (FeliCa) | 62 µs, 17 tx |
 | `DetectB` (NFC-B) | 61.5 µs, 17 tx |
-| `DetectV` (NFC-V) | (see BENCHMARKS) |
+| `DetectV` (NFC-V) | 61.8 µs, 15 tx |
+| `Type2ReadPage` | (see BENCHMARKS) |
 | allocations | 0 per op |
 | `Device` / `Card` | 152 B / 14 B |
 
 ## Roadmap (parity with UIFlow + M5Unit-NFC C++)
 
-1. **Read/write** NFC-A Type 2 and MIFARE Classic (Crypto1).
+1. **Write** NFC-A Type 2/Classic (read is done; write is the gated phase).
 2. NFC-A read/write: Type 2 (Ultralight/NTAG) and MIFARE Classic (Crypto1).
 3. NFC-F read/write + Japanese transport-card flow.
 4. NFC-V, ISO-DEP/APDU/DESFire/Plus, NDEF.

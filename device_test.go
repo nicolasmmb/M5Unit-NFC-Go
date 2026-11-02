@@ -25,6 +25,7 @@ type fakeChip struct {
 	fcTag   bool
 	idm     [8]byte
 	pmm     [8]byte
+	t2      [16]byte
 	vTag    bool
 	vResp   [64]byte
 	vLen    int
@@ -131,6 +132,13 @@ func (f *fakeChip) command(cmd uint8, payload []byte) {
 			return
 		}
 		if f.txbuf[0] == 0x50 {
+			return
+		}
+		if f.txbuf[0] == 0x30 { // Type 2 READ
+			copy(f.fifo[0:16], f.t2[:])
+			f.fifo[16] = 0
+			f.fifo[17] = 0
+			f.fifoLen = 18
 			return
 		}
 		if f.txbuf[0] == 0x05 && f.txLen == 3 { // NFC-B REQB
@@ -289,6 +297,57 @@ func TestDetectCascade(t *testing.T) {
 	}
 	if c.TypeID != 5 || !c.IsType2() {
 		t.Fatalf("type = %d", c.TypeID)
+	}
+}
+
+func TestCrypto1ProxmarkVector(t *testing.T) {
+	const key = uint64(0xFFFFFFFFFFFF)
+	uid := uint32(0x9C599B32)
+	nt := uint32(0x82A4166C)
+	nrEnc := uint32(0xA1E458CE)
+
+	var c1 Crypto1
+	c1.init(key)
+	c1.inject(uid, nt)
+	ks1 := c1.step32In(nrEnc, true)
+	nr := nrEnc ^ ks1
+	ar, _ := suc23(byteswap32(nt))
+
+	var c2 Crypto1
+	c2.init(key)
+	c2.inject(uid, nt)
+	ab, _ := c2.encryptAB(nr, ar)
+	gotNR := uint32(ab[0])<<24 | uint32(ab[1])<<16 | uint32(ab[2])<<8 | uint32(ab[3])
+	gotAR := uint32(ab[4])<<24 | uint32(ab[5])<<16 | uint32(ab[6])<<8 | uint32(ab[7])
+	if gotNR != 0xA1E458CE || gotAR != 0x6EEA41E0 {
+		t.Fatalf("Crypto1 vector = %08X %08X", gotNR, gotAR)
+	}
+}
+
+func TestType2Read(t *testing.T) {
+	d, f := newTestDevice(t)
+	f.setTag7([7]byte{0x04, 1, 2, 3, 4, 5, 6}, 0x0044, 0x00)
+	if _, ok, _ := d.Detect(context.Background()); !ok {
+		t.Fatal("no tag")
+	}
+	for i := range f.t2 {
+		f.t2[i] = byte(i)
+	}
+	q, ok, err := d.Type2ReadQuad(context.Background(), 0)
+	if err != nil || !ok {
+		t.Fatalf("Type2ReadQuad = %v, %v", ok, err)
+	}
+	for i := range q {
+		if q[i] != byte(i) {
+			t.Fatalf("quad[%d] = %02X", i, q[i])
+		}
+	}
+	p, ok, err := d.Type2ReadPage(context.Background(), 5)
+	if err != nil || !ok {
+		t.Fatalf("Type2ReadPage = %v, %v", ok, err)
+	}
+	if p != [4]byte{4, 5, 6, 7} {
+		t.Fatalf("page 5 = %v", p)
 	}
 }
 
@@ -555,6 +614,18 @@ func TestNoAlloc(t *testing.T) {
 	uid := [8]byte{0xE0, 0x04, 1, 2, 3, 4, 5, 6}
 	payload := []byte{0, 0xE0, uid[7], uid[6], uid[5], uid[4], uid[3], uid[2], uid[1], uid[0]}
 	f.setTagV(buildVICC(payload))
+	f.setTag4([4]byte{1, 2, 3, 4}, 0x0004, 0x08)
+	if err := d.ConfigureA(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := d.Detect(ctx); !ok {
+		t.Fatal("no tag for Type2")
+	}
+	if allocs := testing.AllocsPerRun(10, func() {
+		_, _, _ = d.Type2ReadPage(ctx, 4)
+	}); allocs != 0 {
+		t.Fatalf("Type2ReadPage allocates %v per call", allocs)
+	}
 	if err := d.ConfigureV(ctx); err != nil {
 		t.Fatal(err)
 	}
