@@ -83,6 +83,8 @@ if err == nil && ok {
 | `DetectF(ctx) (FeliCaCard, bool, error)` | FeliCa polling (IDm/PMm) |
 | `DetectFInfo(ctx) (FeliCaInfo, bool, error)` | Polling + system codes + type |
 | `FeliCaReadBlock(ctx, info, service, block)` | Read Without Encryption (16 B) |
+| `StartEmulationF(ctx, cfg)` | Passive NFC-F target (PT memory polling response) |
+| `StopEmulation(ctx)` / `Emulating()` / `EmulationActivity()` | Emulation control/status |
 | `DetectB(ctx) (NFCBCard, bool, error)` | NFC-B REQB/ATQB |
 | `ConfigureV(ctx)` / `DetectV(ctx)` | NFC-V ISO15693 inventory |
 | `Type2ReadPage(ctx, page)` / `Type2ReadQuad(ctx, base)` | Ultralight/NTAG read |
@@ -116,7 +118,7 @@ See [BENCHMARKS.md](BENCHMARKS.md). Host measurements:
 
 ## Roadmap (parity with UIFlow + M5Unit-NFC C++)
 
-1. **NDEF** Type 2/3/4/5, then ISO-DEP/DESFire and emulation.
+1. **Full NFC-F emulation** (service/read/write responses) and NDEF.
 2. NFC-A read/write: Type 2 (Ultralight/NTAG) and MIFARE Classic (Crypto1).
 3. NFC-F read/write + Japanese transport-card flow.
 4. NFC-V, ISO-DEP/APDU/DESFire/Plus, NDEF.

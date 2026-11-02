@@ -28,6 +28,7 @@ type fakeChip struct {
 	fcSys   [4]uint16
 	fcSysN  int
 	fcData  [16]byte
+	ptF     [21]byte
 	t2      [16]byte
 	vTag    bool
 	vResp   [64]byte
@@ -234,6 +235,9 @@ func (f *fakeChip) Tx(addr uint16, w, r []byte) error {
 	}
 	b0 := w[0]
 	switch {
+	case b0 == opLoadPTMemoryF:
+		copy(f.ptF[:], w[1:])
+		return nil
 	case b0 == opLoadFIFO:
 		copy(f.txbuf[:], w[1:])
 		f.txLen = len(w) - 1
@@ -443,6 +447,42 @@ func TestDetectF(t *testing.T) {
 	f.setTag4([4]byte{1, 2, 3, 4}, 0x0004, 0x08)
 	if _, ok, err := d.Detect(context.Background()); err != nil || !ok {
 		t.Fatalf("Detect after ConfigureA = %v, %v", ok, err)
+	}
+}
+
+func TestEmulateF(t *testing.T) {
+	d, f := newTestDevice(t)
+	cfg := EmulateFConfig{
+		IDm:        [8]byte{0x01, 0x2E, 0x50, 0xE5, 0x3C, 0x4B, 0x4F, 0x29},
+		PMm:        [8]byte{0x00, 0xF1, 0x00, 0x00, 0x00, 0x01, 0x43, 0x00},
+		SystemCode: 0x88B4,
+	}
+	if err := d.StartEmulationF(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !d.Emulating() {
+		t.Fatal("not emulating")
+	}
+	want := [21]byte{0x88, 0xB4, 0x01,
+		0x01, 0x2E, 0x50, 0xE5, 0x3C, 0x4B, 0x4F, 0x29,
+		0x00, 0xF1, 0x00, 0x00, 0x00, 0x01, 0x43, 0x00,
+		0x00, 0x83}
+	if f.ptF != want {
+		t.Fatalf("PT memory = % X", f.ptF)
+	}
+	f.regs[regMainInterrupt] = 0x01
+	if act, err := d.EmulationActivity(); err != nil || !act {
+		t.Fatalf("activity = %v, %v", act, err)
+	}
+	f.regs[regMainInterrupt] = 0
+	if act, err := d.EmulationActivity(); err != nil || act {
+		t.Fatalf("activity after clear = %v, %v", act, err)
+	}
+	if err := d.StopEmulation(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if d.Emulating() {
+		t.Fatal("still emulating")
 	}
 }
 

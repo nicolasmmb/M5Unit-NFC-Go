@@ -149,8 +149,9 @@ type Device struct {
 	tx [32]byte
 	rx [64]byte
 
-	begun bool
-	mode  uint8
+	begun     bool
+	mode      uint8
+	emulating bool
 
 	c1            Crypto1
 	authenticated bool
@@ -180,6 +181,11 @@ func (d *Device) readReg(reg uint8) (uint8, error) {
 		return 0, err
 	}
 	return d.rx[0], nil
+}
+
+func (d *Device) readRegs(reg uint8, buf []byte) error {
+	d.tx[0] = reg | opRead
+	return d.bus.Tx(uint16(d.addr), d.tx[:1], buf)
 }
 
 func (d *Device) writeReg(reg, val uint8) error {
