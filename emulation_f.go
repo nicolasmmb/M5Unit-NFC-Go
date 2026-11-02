@@ -69,6 +69,14 @@ func (d *Device) StartEmulationF(ctx context.Context, cfg EmulateFConfig) error 
 	if err := d.bus.Tx(uint16(d.addr), d.tx[:22], nil); err != nil {
 		return err
 	}
+	// TSN block (12 x 4-bit slot numbers). Zeros are a valid, even pattern.
+	d.tx[0] = 0xAC
+	for i := 1; i <= 12; i++ {
+		d.tx[i] = 0x00
+	}
+	if err := d.bus.Tx(uint16(d.addr), d.tx[:13], nil); err != nil {
+		return err
+	}
 
 	if err := d.writeReg(regModeDefinition, modeTargetFE); err != nil {
 		return err
