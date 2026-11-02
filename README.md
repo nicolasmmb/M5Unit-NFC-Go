@@ -9,6 +9,9 @@ No C, C++, CGo or Arduino.
 IDm/PMm — FeliCa IC cards) and **NFC-B** (ATQB/PUPI) probes.
 NFC-V, read/write, NDEF and emulation are the next phases (see Roadmap).
 
+> Full project status, reference libraries, parity matrix and improvement
+> backlog: **[NFC-ST25R3916-PLAN.md](NFC-ST25R3916-PLAN.md)**.
+
 ## Features
 
 - Full ST25R3916 initialization from the official sequence: identity,
