@@ -352,22 +352,21 @@ func (d *Device) classicWriteLocked(ctx context.Context, block uint8, data [16]b
 func (d *Device) classicTransceiveEncryptLocked(ctx context.Context, plain []byte, rxPayloadLen int, includeCRC bool, timeoutMS int) (bool, error) {
 	var tx [24]byte
 	n := copy(tx[:], plain)
-	if includeCRC {
-		crc := crc16A(tx[:n])
-		tx[n] = byte(crc)
-		tx[n+1] = byte(crc >> 8)
-		n += 2
-	}
+	// MIFARE commands always carry CRC_A on the wire; includeCRC only controls
+	// whether the received frame is expected to carry CRC.
+	crc := crc16A(tx[:n])
+	tx[n] = byte(crc)
+	tx[n+1] = byte(crc >> 8)
+	n += 2
 	enc, parity := d.c1.encryptStream(tx[:n])
 	pn := appendParityTo(d.parityBuf[:], enc, parity)
 	nbits := n * 9
 	if err := d.writeReg(regISO14443ASettings, noTxPar); err != nil {
 		return false, err
 	}
-	if includeCRC {
-		if err := d.setBits(regAuxiliaryDefinition, noCRCRx); err != nil {
-			return false, err
-		}
+	// ACK/read responses for the encrypted phases are not CRC-checked.
+	if err := d.setBits(regAuxiliaryDefinition, noCRCRx); err != nil {
+		return false, err
 	}
 	if err := d.writeFWT(timeoutMS); err != nil {
 		return false, err
