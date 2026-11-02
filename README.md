@@ -16,7 +16,8 @@ NFC-V, read/write, NDEF and emulation are the next phases (see Roadmap).
   antenna tuning, oscillator and regulator adjustment.
 - I2C transport at **0x50**, including the **16-bit space-B** register space.
 - NFC-A: REQA/WUPA, anticollision cascade CL1/CL2, SELECT, HLTA.
-- NFC-F: FeliCa polling at 212 kbps (wildcard system code), IDm/PMm.
+- NFC-F: FeliCa polling at 212 kbps (wildcard), IDm/PMm, system-code list,
+  generic type (Standard/Lite/Lite-S/Plug) and Read Without Encryption.
 - NFC-B: REQB/ATQB, PUPI, application and protocol bytes.
 - NFC-V: ISO15693 inventory (1-of-4 VCD encoder and Manchester decoder), UID/DSFID.
 - **Type 2 read** (Ultralight/NTAG): READ 0x30, quad/page extraction.
@@ -80,6 +81,8 @@ if err == nil && ok {
 | `ConfigureA(ctx)` / `ConfigureF(ctx)` | Switch a begun device between NFC-A and NFC-F |
 | `ConfigureB(ctx)` | Switch a begun device to NFC-B |
 | `DetectF(ctx) (FeliCaCard, bool, error)` | FeliCa polling (IDm/PMm) |
+| `DetectFInfo(ctx) (FeliCaInfo, bool, error)` | Polling + system codes + type |
+| `FeliCaReadBlock(ctx, info, service, block)` | Read Without Encryption (16 B) |
 | `DetectB(ctx) (NFCBCard, bool, error)` | NFC-B REQB/ATQB |
 | `ConfigureV(ctx)` / `DetectV(ctx)` | NFC-V ISO15693 inventory |
 | `Type2ReadPage(ctx, page)` / `Type2ReadQuad(ctx, base)` | Ultralight/NTAG read |
@@ -113,7 +116,7 @@ See [BENCHMARKS.md](BENCHMARKS.md). Host measurements:
 
 ## Roadmap (parity with UIFlow + M5Unit-NFC C++)
 
-1. **NDEF** Type 2/3/4/5 and NFC-F read.
+1. **NDEF** Type 2/3/4/5, then ISO-DEP/DESFire and emulation.
 2. NFC-A read/write: Type 2 (Ultralight/NTAG) and MIFARE Classic (Crypto1).
 3. NFC-F read/write + Japanese transport-card flow.
 4. NFC-V, ISO-DEP/APDU/DESFire/Plus, NDEF.

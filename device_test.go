@@ -25,6 +25,9 @@ type fakeChip struct {
 	fcTag   bool
 	idm     [8]byte
 	pmm     [8]byte
+	fcSys   [4]uint16
+	fcSysN  int
+	fcData  [16]byte
 	t2      [16]byte
 	vTag    bool
 	vResp   [64]byte
@@ -72,6 +75,14 @@ func (f *fakeChip) setTagF(idm, pmm [8]byte) {
 	f.fcTag = true
 	f.idm = idm
 	f.pmm = pmm
+}
+
+func (f *fakeChip) setSysCodes(codes ...uint16) {
+	f.fcSysN = len(codes)
+	if f.fcSysN > len(f.fcSys) {
+		f.fcSysN = len(f.fcSys)
+	}
+	copy(f.fcSys[:], codes)
 }
 
 func (f *fakeChip) setTag7(uid [7]byte, atqa uint16, sak uint8) {
@@ -160,6 +171,35 @@ func (f *fakeChip) command(cmd uint8, payload []byte) {
 			f.fifo[12] = 0
 			f.fifo[13] = 0
 			f.fifoLen = 14
+			return
+		}
+		if f.txbuf[0] == 0x0C && f.txLen == 9 { // Request System Code
+			if !f.fcTag {
+				return
+			}
+			f.fifo[0] = byte(11 + 2*f.fcSysN)
+			f.fifo[1] = 0x0D
+			copy(f.fifo[2:10], f.idm[:])
+			f.fifo[10] = byte(f.fcSysN)
+			for i := 0; i < f.fcSysN; i++ {
+				f.fifo[11+2*i] = byte(f.fcSys[i] >> 8)
+				f.fifo[12+2*i] = byte(f.fcSys[i])
+			}
+			f.fifoLen = 11 + 2*f.fcSysN
+			return
+		}
+		if f.txbuf[0] == 0x06 && f.txLen == 15 { // Read Without Encryption
+			if !f.fcTag {
+				return
+			}
+			f.fifo[0] = 29
+			f.fifo[1] = 0x07
+			copy(f.fifo[2:10], f.idm[:])
+			f.fifo[10] = 0
+			f.fifo[11] = 0
+			f.fifo[12] = 1
+			copy(f.fifo[13:29], f.fcData[:])
+			f.fifoLen = 29
 			return
 		}
 		if f.txbuf[0] == 0x00 && f.txLen == 5 { // NFC-F Polling
@@ -406,6 +446,50 @@ func TestDetectF(t *testing.T) {
 	}
 }
 
+func TestDetectFInfo(t *testing.T) {
+	d, f := newTestDevice(t)
+	idm := [8]byte{0x01, 0x12, 0x02, 0x12, 0x15, 0x23, 0x34, 0x20}
+	pmm := [8]byte{0x05, 0x31, 0x43, 0x45, 0x46, 0x82, 0xB7, 0xFF}
+	f.setTagF(idm, pmm)
+	f.setSysCodes(0x0003, 0x12FC)
+	if err := d.ConfigureF(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	info, ok, err := d.DetectFInfo(context.Background())
+	if err != nil || !ok {
+		t.Fatalf("DetectFInfo = %v, %v", ok, err)
+	}
+	if info.IDm != idm || info.PMm != pmm || info.Type != FeliCaStandard {
+		t.Fatalf("info = %+v", info)
+	}
+	if info.SystemCount != 2 || info.SystemCodes[0] != 0x0003 || info.SystemCodes[1] != 0x12FC {
+		t.Fatalf("system codes = %d %v", info.SystemCount, info.SystemCodes[:info.SystemCount])
+	}
+	for i := range f.fcData {
+		f.fcData[i] = byte(0xA0 + i)
+	}
+	blk, ok, err := d.FeliCaReadBlock(context.Background(), info, 0x0009, 0)
+	if err != nil || !ok {
+		t.Fatalf("FeliCaReadBlock = %v, %v", ok, err)
+	}
+	if blk != f.fcData {
+		t.Fatalf("block = % X", blk)
+	}
+}
+
+func TestDetectFLite(t *testing.T) {
+	d, f := newTestDevice(t)
+	f.setTagF([8]byte{0x03, 0xFE, 1, 2, 3, 4, 5, 6}, [8]byte{})
+	f.setSysCodes(0x88B4)
+	if err := d.ConfigureF(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	info, ok, err := d.DetectFInfo(context.Background())
+	if err != nil || !ok || info.Type != FeliCaLite {
+		t.Fatalf("lite info = %+v, %v, %v", info, ok, err)
+	}
+}
+
 func TestDetectFNone(t *testing.T) {
 	d, _ := newTestDevice(t)
 	if err := d.ConfigureF(context.Background()); err != nil {
@@ -626,6 +710,12 @@ func TestNoAlloc(t *testing.T) {
 		_, _, _ = d.DetectF(ctx)
 	}); allocs != 0 {
 		t.Fatalf("DetectF allocates %v per call", allocs)
+	}
+	f.setSysCodes(0x0003)
+	if allocs := testing.AllocsPerRun(10, func() {
+		_, _, _ = d.DetectFInfo(ctx)
+	}); allocs != 0 {
+		t.Fatalf("DetectFInfo allocates %v per call", allocs)
 	}
 	if err := d.ConfigureB(ctx); err != nil {
 		t.Fatal(err)

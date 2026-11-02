@@ -14,6 +14,7 @@ dominates on real hardware (400 kHz I2C, ~60–80 µs per transaction).
 | `BenchmarkDetectF` | FeliCa polling (212 kbps) against a scripted PICC |
 | `BenchmarkDetectB` | NFC-B REQB/ATQB against a scripted PICC |
 | `BenchmarkDetectV` | NFC-V ISO15693 inventory (VCD encode / Manchester decode) |
+| `BenchmarkDetectFInfo` | FeliCa polling + Request System Code |
 | `BenchmarkType2Read` | Type 2 page read (encrypted transport not needed) |
 | `BenchmarkDetectNoCard` | two timeouts (REQA + WUPA) and the polling cost |
 | `TestNoAlloc` / `TestBeginNoAlloc` | 0 allocations per operation |
@@ -39,6 +40,7 @@ make bench-compare FROM=before TO=after
 | `DetectF` | 62 µs | 17.0 | 0 |
 | `DetectB` | 61.5 µs | 17.0 | 0 |
 | `DetectV` | 61.8 µs | 15.0 | 0 |
+| `DetectFInfo` | 122.7 µs | 34.0 | 0 |
 | `Type2ReadPage` | 1.23 ms (incl. 1 ms FIFO settle) | 20.0 | 0 |
 | `DetectNoCard` | 25.2 ms | 72.0 | 0 |
 
