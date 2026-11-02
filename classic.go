@@ -313,8 +313,16 @@ func (d *Device) ClassicWriteBlock(ctx context.Context, uid []byte, block uint8,
 	if d.mode != modeA {
 		return false, ErrWrongMode
 	}
-	ok, err := d.classicAuthLocked(ctx, uid, block, key)
+	// Authenticate through the sector trailer, as the reference C++ write path
+	// does (block 1 -> trailer 3). The target block itself is never written.
+	authBlock := block&0xFC | 0x03
+	ok, err := d.classicAuthLocked(ctx, uid, authBlock, key)
 	if err != nil || !ok {
+		d.classicEndSessionLocked()
+		return false, err
+	}
+	// Warm the crypto state with a read before the write.
+	if _, ok, err = d.classicReadLocked(ctx, block); err != nil || !ok {
 		d.classicEndSessionLocked()
 		return false, err
 	}
@@ -334,7 +342,10 @@ func (d *Device) ClassicWriteBlock(ctx context.Context, uid []byte, block uint8,
 	if err != nil || !ok {
 		return false, err
 	}
-	return got == data, nil
+	if got != data {
+		return false, ErrVerify
+	}
+	return true, nil
 }
 
 func (d *Device) classicWriteLocked(ctx context.Context, block uint8, data [16]byte) (bool, error) {

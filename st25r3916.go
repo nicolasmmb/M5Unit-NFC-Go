@@ -131,6 +131,7 @@ var (
 	ErrWrongMode  = errors.New("nfc: protocol mode does not match")
 	ErrTimeout    = errors.New("nfc: timeout")
 	ErrNotAck     = errors.New("nfc: card did not acknowledge")
+	ErrVerify     = errors.New("nfc: verification failed")
 )
 
 // Device is a Unit NFC reader. It is safe for concurrent use.
