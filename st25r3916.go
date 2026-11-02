@@ -152,7 +152,7 @@ type Device struct {
 	c1            Crypto1
 	authenticated bool
 	rng           uint32
-	parityBuf     [16]byte
+	parityBuf     [32]byte
 }
 
 // New returns a Device on bus with the default I2C address.
