@@ -313,29 +313,49 @@ func (d *Device) ClassicWriteBlock(ctx context.Context, uid []byte, block uint8,
 	if d.mode != modeA {
 		return false, ErrWrongMode
 	}
-	// Authenticate through the sector trailer, as the reference C++ write path
-	// does (block 1 -> trailer 3). The target block itself is never written.
-	authBlock := block&0xFC | 0x03
-	ok, err := d.classicAuthLocked(ctx, uid, authBlock, key)
-	if err != nil || !ok {
+	// Try the target block first (known-good read path), then the sector
+	// trailer, like the official driver does.
+	trailer := block&0xFC | 0x03
+	authed := false
+	for _, ab := range [2]uint8{block, trailer} {
+		ok, err := d.classicAuthLocked(ctx, uid, ab, key)
+		if err == nil && ok {
+			authed = true
+			break
+		}
 		d.classicEndSessionLocked()
-		return false, err
 	}
+	if !authed {
+		return false, ErrAuth
+	}
+	var (
+		ok  bool
+		err error
+	)
 	// Warm the crypto state with a read before the write.
-	if _, ok, err = d.classicReadLocked(ctx, block); err != nil || !ok {
+	if _, ok, err := d.classicReadLocked(ctx, block); err != nil || !ok {
 		d.classicEndSessionLocked()
-		return false, err
+		if err != nil {
+			return false, err
+		}
+		return false, ErrRead
 	}
 	ok, err = d.classicWriteLocked(ctx, block, data)
 	d.classicEndSessionLocked()
-	if err != nil || !ok {
+	if err != nil {
 		return false, err
+	}
+	if !ok {
+		return false, ErrNotAck
 	}
 	// Verify with a fresh authentication and read.
 	ok, err = d.classicAuthLocked(ctx, uid, block, key)
 	if err != nil || !ok {
 		d.classicEndSessionLocked()
-		return false, err
+		if err != nil {
+			return false, err
+		}
+		return false, ErrAuth
 	}
 	got, ok, err := d.classicReadLocked(ctx, block)
 	d.classicEndSessionLocked()
