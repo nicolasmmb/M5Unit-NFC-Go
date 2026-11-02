@@ -134,6 +134,14 @@ func (f *fakeChip) command(cmd uint8, payload []byte) {
 		if f.txbuf[0] == 0x50 {
 			return
 		}
+		if f.txbuf[0] == 0xA2 && f.txLen == 6 { // Type 2 WRITE
+			page := f.txbuf[1]
+			off := int(page&3) * 4
+			copy(f.t2[off:off+4], f.txbuf[2:6])
+			f.fifo[0] = 0x0A
+			f.fifoLen = 1
+			return
+		}
 		if f.txbuf[0] == 0x30 { // Type 2 READ
 			copy(f.fifo[0:16], f.t2[:])
 			f.fifo[16] = 0
@@ -348,6 +356,23 @@ func TestType2Read(t *testing.T) {
 	}
 	if p != [4]byte{4, 5, 6, 7} {
 		t.Fatalf("page 5 = %v", p)
+	}
+}
+
+func TestType2Write(t *testing.T) {
+	d, f := newTestDevice(t)
+	f.setTag7([7]byte{0x04, 1, 2, 3, 4, 5, 6}, 0x0044, 0x00)
+	if _, ok, _ := d.Detect(context.Background()); !ok {
+		t.Fatal("no tag")
+	}
+	want := [4]byte{0xCA, 0xFE, 0xBA, 0xBE}
+	ok, err := d.Type2WritePage(context.Background(), 5, want)
+	if err != nil || !ok {
+		t.Fatalf("Type2WritePage = %v, %v", ok, err)
+	}
+	got, ok, err := d.Type2ReadPage(context.Background(), 5)
+	if err != nil || !ok || got != want {
+		t.Fatalf("read back = %v, %v, %v", got, ok, err)
 	}
 }
 
@@ -625,6 +650,11 @@ func TestNoAlloc(t *testing.T) {
 		_, _, _ = d.Type2ReadPage(ctx, 4)
 	}); allocs != 0 {
 		t.Fatalf("Type2ReadPage allocates %v per call", allocs)
+	}
+	if allocs := testing.AllocsPerRun(10, func() {
+		_, _ = d.Type2WritePage(ctx, 4, [4]byte{1, 2, 3, 4})
+	}); allocs != 0 {
+		t.Fatalf("Type2WritePage allocates %v per call", allocs)
 	}
 	if err := d.ConfigureV(ctx); err != nil {
 		t.Fatal(err)

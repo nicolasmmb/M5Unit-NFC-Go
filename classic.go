@@ -74,13 +74,17 @@ func (d *Device) Type2ReadQuad(ctx context.Context, basePage uint8) ([16]byte, b
 	ctx = ctxOrBackground(ctx)
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	var out [16]byte
+	if d.mode != modeA && d.begun {
+		return [16]byte{}, false, ErrWrongMode
+	}
 	if !d.begun {
-		return out, false, ErrNotBegun
+		return [16]byte{}, false, ErrNotBegun
 	}
-	if d.mode != modeA {
-		return out, false, ErrWrongMode
-	}
+	return d.type2ReadQuadLocked(ctx, basePage)
+}
+
+func (d *Device) type2ReadQuadLocked(ctx context.Context, basePage uint8) ([16]byte, bool, error) {
+	var out [16]byte
 	rb, ok, err := d.nfcaTransceiveCRC(ctx, []byte{0x30, basePage & 0xFC}, 24, 18)
 	if err != nil || !ok || len(rb) < 18 {
 		return out, false, err
@@ -92,14 +96,50 @@ func (d *Device) Type2ReadQuad(ctx context.Context, basePage uint8) ([16]byte, b
 // Type2ReadPage reads one page (4 bytes) of an Ultralight/NTAG card. The card
 // must have been activated by Detect and not halted.
 func (d *Device) Type2ReadPage(ctx context.Context, page uint8) ([4]byte, bool, error) {
+	ctx = ctxOrBackground(ctx)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.begun {
+		return [4]byte{}, false, ErrNotBegun
+	}
+	if d.mode != modeA {
+		return [4]byte{}, false, ErrWrongMode
+	}
+	return d.type2ReadPageLocked(ctx, page)
+}
+
+func (d *Device) type2ReadPageLocked(ctx context.Context, page uint8) ([4]byte, bool, error) {
 	var out [4]byte
-	q, ok, err := d.Type2ReadQuad(ctx, page)
+	q, ok, err := d.type2ReadQuadLocked(ctx, page)
 	if err != nil || !ok {
 		return out, false, err
 	}
 	off := int(page&0x03) * 4
 	copy(out[:], q[off:off+4])
 	return out, true, nil
+}
+
+// Type2WritePage writes one page and verifies it by reading it back.
+// Only user pages should be written (never UID/lock/config pages).
+func (d *Device) Type2WritePage(ctx context.Context, page uint8, data [4]byte) (bool, error) {
+	ctx = ctxOrBackground(ctx)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.begun {
+		return false, ErrNotBegun
+	}
+	if d.mode != modeA {
+		return false, ErrWrongMode
+	}
+	frame := [6]byte{0xA2, page, data[0], data[1], data[2], data[3]}
+	if err := d.nfcaTransceiveCRCAck(ctx, frame[:], 40); err != nil {
+		return false, err
+	}
+	got, ok, err := d.type2ReadPageLocked(ctx, page)
+	if err != nil || !ok {
+		return false, err
+	}
+	return got == data, nil
 }
 
 // ClassicReadBlock authenticates with key A and reads one 16-byte block.
@@ -258,6 +298,171 @@ func (d *Device) classicReadLocked(ctx context.Context, block uint8) ([16]byte, 
 	}
 	copy(out[:], rb[:16])
 	return out, true, nil
+}
+
+// ClassicWriteBlock authenticates with key A, writes one 16-byte block and
+// verifies it by reading it back. Never write block 0 (UID) or a sector
+// trailer (block 3 of each sector).
+func (d *Device) ClassicWriteBlock(ctx context.Context, uid []byte, block uint8, key [6]byte, data [16]byte) (bool, error) {
+	ctx = ctxOrBackground(ctx)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.begun {
+		return false, ErrNotBegun
+	}
+	if d.mode != modeA {
+		return false, ErrWrongMode
+	}
+	ok, err := d.classicAuthLocked(ctx, uid, block, key)
+	if err != nil || !ok {
+		d.classicEndSessionLocked()
+		return false, err
+	}
+	ok, err = d.classicWriteLocked(ctx, block, data)
+	d.classicEndSessionLocked()
+	if err != nil || !ok {
+		return false, err
+	}
+	// Verify with a fresh authentication and read.
+	ok, err = d.classicAuthLocked(ctx, uid, block, key)
+	if err != nil || !ok {
+		d.classicEndSessionLocked()
+		return false, err
+	}
+	got, ok, err := d.classicReadLocked(ctx, block)
+	d.classicEndSessionLocked()
+	if err != nil || !ok {
+		return false, err
+	}
+	return got == data, nil
+}
+
+func (d *Device) classicWriteLocked(ctx context.Context, block uint8, data [16]byte) (bool, error) {
+	cmd := [2]byte{0xA0, block}
+	ok, err := d.classicTransceiveEncryptLocked(ctx, cmd[:], 1, false, 12)
+	if err != nil || !ok {
+		return false, err
+	}
+	time.Sleep(82 * time.Microsecond)
+	return d.classicTransceiveEncryptLocked(ctx, data[:], 1, false, 24)
+}
+
+// classicTransceiveEncryptLocked encrypts a plain frame (and CRC when
+// includeCRC) with the current Crypto1 state and checks the ACK or payload.
+func (d *Device) classicTransceiveEncryptLocked(ctx context.Context, plain []byte, rxPayloadLen int, includeCRC bool, timeoutMS int) (bool, error) {
+	var tx [24]byte
+	n := copy(tx[:], plain)
+	if includeCRC {
+		crc := crc16A(tx[:n])
+		tx[n] = byte(crc)
+		tx[n+1] = byte(crc >> 8)
+		n += 2
+	}
+	enc, parity := d.c1.encryptStream(tx[:n])
+	pn := appendParityTo(d.parityBuf[:], enc, parity)
+	nbits := n * 9
+	if err := d.writeReg(regISO14443ASettings, noTxPar); err != nil {
+		return false, err
+	}
+	if includeCRC {
+		if err := d.setBits(regAuxiliaryDefinition, noCRCRx); err != nil {
+			return false, err
+		}
+	}
+	if err := d.writeFWT(timeoutMS); err != nil {
+		return false, err
+	}
+	if err := d.clearInterrupts(); err != nil {
+		return false, err
+	}
+	if err := d.command(cmdClearFIFO, nil); err != nil {
+		return false, err
+	}
+	if err := d.writeFIFO(d.parityBuf[:pn]); err != nil {
+		return false, err
+	}
+	if err := d.writeNumTX(nbits/8, nbits%8); err != nil {
+		return false, err
+	}
+	if err := d.command(cmdTransmitWithoutCRC, nil); err != nil {
+		return false, err
+	}
+	rlen := rxPayloadLen
+	if includeCRC {
+		rlen += 2
+	}
+	got, err := d.waitFIFO(ctx, rlen, timeoutMS)
+	if err != nil || got < rlen {
+		return false, err
+	}
+	rb, err := d.readFIFO(rlen)
+	if err != nil {
+		return false, err
+	}
+	if rlen == 1 {
+		ret := rb[0] & 0x0F
+		var res uint8
+		for i := 0; i < 4; i++ {
+			res |= (d.c1.stepWith(0, false) ^ ((ret >> uint(i)) & 1)) << uint(i)
+		}
+		return res == 0x0A, nil
+	}
+	for i := 0; i < rlen; i++ {
+		rb[i] ^= d.c1.step8(0, false)
+	}
+	if includeCRC {
+		crc := crc16A(rb[:rxPayloadLen])
+		lo, hi := byte(crc), byte(crc>>8)
+		if !((rb[rxPayloadLen] == lo && rb[rxPayloadLen+1] == hi) ||
+			(rb[rxPayloadLen] == hi && rb[rxPayloadLen+1] == lo)) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// nfcaTransceiveCRCAck sends a frame with CRC and checks the MIFARE ACK nibble.
+func (d *Device) nfcaTransceiveCRCAck(ctx context.Context, tx []byte, timeoutMS int) error {
+	if err := d.writeFWT(timeoutMS); err != nil {
+		return err
+	}
+	if err := d.writeReg(regISO14443ASettings, 0x00); err != nil {
+		return err
+	}
+	if err := d.clearBits(regAuxiliaryDefinition, noCRCRx); err != nil {
+		return err
+	}
+	if err := d.clearInterrupts(); err != nil {
+		return err
+	}
+	if err := d.command(cmdClearFIFO, nil); err != nil {
+		return err
+	}
+	if err := d.writeFIFO(tx); err != nil {
+		return err
+	}
+	if err := d.writeNumTX(len(tx), 0); err != nil {
+		return err
+	}
+	if err := d.command(cmdTransmitWithCRC, nil); err != nil {
+		return err
+	}
+	n, err := d.waitFIFO(ctx, 1, timeoutMS)
+	if err != nil {
+		return err
+	}
+	if n < 1 {
+		return ErrTimeout
+	}
+	time.Sleep(time.Millisecond)
+	rb, err := d.readFIFO(n)
+	if err != nil {
+		return err
+	}
+	if rb[0]&0x0F != 0x0A {
+		return ErrNotAck
+	}
+	return nil
 }
 
 func (d *Device) classicEndSessionLocked() {
