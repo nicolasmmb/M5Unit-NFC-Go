@@ -103,6 +103,27 @@ func BenchmarkDetectB(b *testing.B) {
 	reportTx(b, f, start)
 }
 
+func BenchmarkDetectV(b *testing.B) {
+	d, f := newTestDevice(b)
+	d.pollDelay = time.Millisecond
+	uid := [8]byte{0xE0, 0x04, 1, 2, 3, 4, 5, 6}
+	payload := []byte{0, 0xE0, uid[7], uid[6], uid[5], uid[4], uid[3], uid[2], uid[1], uid[0]}
+	f.setTagV(buildVICC(payload))
+	if err := d.ConfigureV(context.Background()); err != nil {
+		b.Fatal(err)
+	}
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	start := f.tx
+	for i := 0; i < b.N; i++ {
+		if _, ok, err := d.DetectV(ctx); err != nil || !ok {
+			b.Fatalf("DetectV: %v %v", ok, err)
+		}
+	}
+	reportTx(b, f, start)
+}
+
 func BenchmarkDetectNoCard(b *testing.B) {
 	d, f := newTestDevice(b)
 	d.pollDelay = time.Millisecond

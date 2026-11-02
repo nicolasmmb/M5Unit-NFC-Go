@@ -118,6 +118,7 @@ const (
 	modeA    = 1
 	modeF    = 2
 	modeB    = 3
+	modeV    = 4
 
 	fcHz = 13560000
 )

@@ -25,6 +25,9 @@ type fakeChip struct {
 	fcTag   bool
 	idm     [8]byte
 	pmm     [8]byte
+	vTag    bool
+	vResp   [64]byte
+	vLen    int
 	bTag    bool
 	pupi    [4]byte
 	app     [4]byte
@@ -49,6 +52,12 @@ func (f *fakeChip) setTag4(uid [4]byte, atqa uint16, sak uint8) {
 	f.uid = [7]byte{uid[0], uid[1], uid[2], uid[3]}
 	f.atqa = atqa
 	f.sak = sak
+}
+
+func (f *fakeChip) setTagV(resp []byte) {
+	f.vTag = true
+	copy(f.vResp[:], resp)
+	f.vLen = len(resp)
 }
 
 func (f *fakeChip) setTagB(pupi, app [4]byte, proto [3]byte) {
@@ -85,6 +94,11 @@ func (f *fakeChip) command(cmd uint8, payload []byte) {
 			f.fifoLen = 2
 		}
 	case cmdTransmitWithoutCRC:
+		if f.vTag && f.txLen > 0 && f.txbuf[0] == 0x21 { // NFC-V VCD frame
+			copy(f.fifo[:], f.vResp[:f.vLen])
+			f.fifoLen = f.vLen
+			return
+		}
 		if !f.tag || f.txLen < 2 {
 			return
 		}
@@ -318,6 +332,112 @@ func TestDetectFNone(t *testing.T) {
 	}
 }
 
+type bitWriter struct {
+	buf   [64]byte
+	nbits int
+}
+
+func (w *bitWriter) bit(b bool) {
+	if b {
+		w.buf[w.nbits/8] |= 1 << (w.nbits % 8)
+	}
+	w.nbits++
+}
+
+func (w *bitWriter) bitsLSB(v uint32, n int) {
+	for i := 0; i < n; i++ {
+		w.bit(v>>uint(i)&1 != 0)
+	}
+}
+
+// buildVICC mirrors the official test helper: SOF 0x17 (5 bits), Manchester
+// payload and an EOF pattern at the byte boundary the decoder checks.
+func buildVICC(payload []byte) []byte {
+	var w bitWriter
+	w.bitsLSB(0x17, 5)
+	for _, b := range payload {
+		for i := 0; i < 8; i++ {
+			if b>>uint(i)&1 != 0 {
+				w.bit(false)
+				w.bit(true)
+			} else {
+				w.bit(true)
+				w.bit(false)
+			}
+		}
+	}
+	mpEnd := 5 + len(payload)*8*2
+	bytePos := mpEnd / 8
+	if len(w.buf) <= bytePos+1 {
+		return nil
+	}
+	w.buf[bytePos] = (w.buf[bytePos] & 0x1F) | 0xA0
+	w.buf[bytePos+1] = 0x03
+	n := bytePos + 2
+	return append([]byte(nil), w.buf[:n]...)
+}
+
+func TestVICCRoundTrip(t *testing.T) {
+	payload := []byte{0x00, 0xE0, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 0x04, 0xE0}
+	frame := buildVICC(payload)
+	if frame == nil {
+		t.Fatal("frame too long")
+	}
+	var out [16]byte
+	n, ok := decodeVICC(out[:], frame, 0)
+	if !ok || n != len(payload) {
+		t.Fatalf("decode = %d, %v", n, ok)
+	}
+	for i := range payload {
+		if out[i] != payload[i] {
+			t.Fatalf("decode[%d] = %02X, want %02X", i, out[i], payload[i])
+		}
+	}
+}
+
+func TestEncodeVCD(t *testing.T) {
+	frame := []byte{0x26, 0x01, 0x00, 0x00, 0x00}
+	var enc [32]byte
+	n := encodeVCD(enc[:], frame)
+	if n != 1+len(frame)*4+1 || enc[0] != vcdSof || enc[n-1] != vcdEof {
+		t.Fatalf("encodeVCD = %d bytes, sof/eof %02X/%02X", n, enc[0], enc[n-1])
+	}
+}
+
+func TestDetectV(t *testing.T) {
+	d, f := newTestDevice(t)
+	uid := [8]byte{0xE0, 0x04, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66}
+	payload := []byte{0x00, 0xE0,
+		uid[7], uid[6], uid[5], uid[4], uid[3], uid[2], uid[1], uid[0]}
+	f.setTagV(buildVICC(payload))
+	if _, _, err := d.DetectV(context.Background()); !errors.Is(err, ErrWrongMode) {
+		t.Fatalf("DetectV before ConfigureV = %v", err)
+	}
+	if err := d.ConfigureV(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	c, ok, err := d.DetectV(context.Background())
+	if err != nil || !ok {
+		t.Fatalf("DetectV = %v, %v", ok, err)
+	}
+	if c.UID != uid || c.DSFID != 0xE0 {
+		t.Fatalf("NFC-V = %+v", c)
+	}
+	if d.Mode() != modeV {
+		t.Fatalf("mode = %d", d.Mode())
+	}
+}
+
+func TestDetectNoneV(t *testing.T) {
+	d, _ := newTestDevice(t)
+	if err := d.ConfigureV(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := d.DetectV(context.Background()); err != nil || ok {
+		t.Fatalf("DetectV no card = %v, %v", ok, err)
+	}
+}
+
 func TestDetectB(t *testing.T) {
 	d, f := newTestDevice(t)
 	pupi := [4]byte{0x11, 0x22, 0x33, 0x44}
@@ -431,6 +551,17 @@ func TestNoAlloc(t *testing.T) {
 		_, _, _ = d.DetectB(ctx)
 	}); allocs != 0 {
 		t.Fatalf("DetectB allocates %v per call", allocs)
+	}
+	uid := [8]byte{0xE0, 0x04, 1, 2, 3, 4, 5, 6}
+	payload := []byte{0, 0xE0, uid[7], uid[6], uid[5], uid[4], uid[3], uid[2], uid[1], uid[0]}
+	f.setTagV(buildVICC(payload))
+	if err := d.ConfigureV(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if allocs := testing.AllocsPerRun(10, func() {
+		_, _, _ = d.DetectV(ctx)
+	}); allocs != 0 {
+		t.Fatalf("DetectV allocates %v per call", allocs)
 	}
 }
 
