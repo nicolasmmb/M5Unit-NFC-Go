@@ -14,3 +14,26 @@ jobs:
           go-version-file: go.mod
       - run: go test -race ./...
       - run: go vet ./...
+
+  agnostic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: acifani/setup-tinygo@v2
+        with:
+          tinygo-version: '0.44.0'
+      - name: Board agnosticism and chip tag coverage
+        run: |
+          set -euo pipefail
+          MOD=$(awk '/^module /{print $2}' go.mod)
+          rm -rf /tmp/agn && mkdir -p /tmp/agn && cd /tmp/agn
+          printf 'module agn\n\ngo 1.26\n\nrequire %s v0.0.0\nreplace %s => %s\n' \
+            "$MOD" "$MOD" "$GITHUB_WORKSPACE" > go.mod
+          printf 'package main\n\nimport lib "%s"\n\nvar _ = lib.New\n\nfunc main() {}\n' \
+            "$MOD" > main.go
+          go mod tidy >/dev/null
+          tinygo build -target=pico -o /tmp/agn/pico.bin .
+          tinygo build -target=arduino-nano33 -o /tmp/agn/nrf.bin .
